@@ -108,9 +108,22 @@ export default function AudioRecorder({
         setRecordingTime(prev => prev + 1);
       }, 1000);
       
-      // Create and start MediaRecorder
-      const mediaRecorder = new MediaRecorder(streamRef.current);
+      // Create and start MediaRecorder with specific audio format that Deepgram supports
+      // Use audio/wav with PCM encoding which is well-supported by Deepgram
+      const options = { mimeType: 'audio/webm;codecs=opus' };
+      
+      // Check if this format is supported by the browser
+      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        console.warn(`${options.mimeType} is not supported, using default format`);
+      }
+      
+      // Create the MediaRecorder with the supported options
+      const mediaRecorder = new MediaRecorder(streamRef.current, 
+                                            MediaRecorder.isTypeSupported(options.mimeType) ? options : undefined);
       mediaRecorderRef.current = mediaRecorder;
+      
+      // Log the actual format being used
+      console.log(`Using audio format: ${mediaRecorder.mimeType}`);
       
       // Collect audio data
       mediaRecorder.ondataavailable = (event) => {
