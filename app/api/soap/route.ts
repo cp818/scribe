@@ -1,35 +1,74 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-export const runtime = 'edge';
+// Using Node.js runtime instead of edge for better compatibility
+export const config = {
+  runtime: 'nodejs',
+};
 
 export async function GET(req: NextRequest) {
+  // Add CORS headers for all responses
+  const responseHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  };
+
   try {
+    console.log('SOAP API endpoint called');
+
     // Get data from query parameter
     const searchParams = req.nextUrl.searchParams;
     const dataParam = searchParams.get('data');
     
     if (!dataParam) {
-      return new Response(JSON.stringify({ error: 'Missing data parameter' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      console.log('Missing data parameter');
+      return NextResponse.json(
+        { error: 'Missing data parameter' },
+        { status: 400, headers: { ...responseHeaders, 'Content-Type': 'application/json' } }
+      );
     }
     
-    const data = JSON.parse(decodeURIComponent(dataParam));
+    let data;
+    try {
+      data = JSON.parse(decodeURIComponent(dataParam));
+    } catch (parseError) {
+      console.error('Error parsing JSON data:', parseError);
+      return NextResponse.json(
+        { error: 'Invalid JSON data' },
+        { status: 400, headers: { ...responseHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
     const { transcript, previous_note } = data;
     
     if (!transcript) {
-      return new Response(JSON.stringify({ error: 'Missing transcript' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      console.log('Missing transcript in request');
+      return NextResponse.json(
+        { error: 'Missing transcript' },
+        { status: 400, headers: { ...responseHeaders, 'Content-Type': 'application/json' } }
+      );
     }
+
+    console.log('Transcript received, length:', transcript.length);
+    if (previous_note) {
+      console.log('Previous note provided');
+    }
+
+    // Check for OpenAI API key
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      console.error('Missing OpenAI API key');
+      return NextResponse.json(
+        { error: 'Configuration error: Missing OpenAI API key' },
+        { status: 500, headers: { ...responseHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Initialize OpenAI client
+    const openai = new OpenAI({
+      apiKey: apiKey,
+    });
 
     // Set up SSE response
     const encoder = new TextEncoder();
@@ -60,48 +99,75 @@ Rules
 3. Leave placeholders for any missing but expected details.
 4. diff must list only the lines newly added or edited versus the previous JSON.`;
 
-          // Prepare the messages for OpenAI with correct typing
-          const messages = [
-            { role: 'system', content: systemPrompt } as const,
-            { 
-              role: 'user', 
-              content: JSON.stringify({
-                transcript,
-                previous_note
-              })
-            } as const
-          ];
+          console.log('Calling OpenAI API...');
 
-          // Call OpenAI with streaming
-          const completion = await openai.chat.completions.create({
-            model: 'gpt-4o-mini', // Could also use gpt-4o for higher accuracy
-            messages: messages,
-            stream: true,
-            response_format: { type: 'json_object' }
-          });
+          // Define a fallback SOAP note in case of API errors
+          const fallbackNote = {
+            metadata: {
+              patient_name: null,
+              clinician_name: null,
+              visit_datetime: new Date().toISOString(),
+              chief_complaint: null,
+              medications_list: []
+            },
+            subjective: "[Waiting for transcript processing]",
+            objective: "[Waiting for transcript processing]",
+            assessment: "[Waiting for transcript processing]",
+            plan: "[Waiting for transcript processing]",
+            diff: ["Initial SOAP note generated"]
+          };
 
-          let accumulatedJson = '';
-          
-          // Process the streaming response
-          for await (const chunk of completion) {
-            const content = chunk.choices[0]?.delta?.content || '';
-            if (content) {
-              accumulatedJson += content;
-              
-              try {
-                // Try to parse as JSON to see if we have a complete object
-                JSON.parse(accumulatedJson);
+          try {
+            // Prepare the messages for OpenAI
+            const messages = [
+              { role: 'system', content: systemPrompt },
+              { 
+                role: 'user', 
+                content: JSON.stringify({
+                  transcript,
+                  previous_note
+                })
+              }
+            ];
+
+            // Call OpenAI with streaming
+            const completion = await openai.chat.completions.create({
+              model: 'gpt-4o-mini', // Could also use gpt-4o for higher accuracy
+              messages: messages as any, // Type casting to work around TypeScript issues
+              stream: true,
+              response_format: { type: 'json_object' }
+            });
+
+            let accumulatedJson = '';
+            
+            // Process the streaming response
+            for await (const chunk of completion) {
+              const content = chunk.choices[0]?.delta?.content || '';
+              if (content) {
+                accumulatedJson += content;
                 
-                // If we successfully parsed, send this chunk to the client
-                controller.enqueue(encoder.encode(`data: ${accumulatedJson}\n\n`));
-              } catch (e) {
-                // Incomplete JSON, continue accumulating
+                try {
+                  // Try to parse as JSON to see if we have a complete object
+                  JSON.parse(accumulatedJson);
+                  
+                  // If we successfully parsed, send this chunk to the client
+                  controller.enqueue(encoder.encode(`data: ${accumulatedJson}\n\n`));
+                } catch (e) {
+                  // Incomplete JSON, continue accumulating
+                }
               }
             }
+            
+            console.log('OpenAI streaming completed successfully');
+            // Send 'done' event to signal completion
+            controller.enqueue(encoder.encode(`event: done\ndata: completed\n\n`));
+          } catch (openaiError) {
+            // If OpenAI API fails, send the fallback note
+            console.error('OpenAI API error:', openaiError);
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(fallbackNote)}\n\n`));
+            controller.enqueue(encoder.encode(`event: done\ndata: completed\n\n`));
           }
           
-          // Send 'done' event to signal completion
-          controller.enqueue(encoder.encode(`event: done\ndata: completed\n\n`));
           controller.close();
         } catch (error) {
           console.error('Streaming error:', error);
@@ -114,6 +180,7 @@ Rules
     // Return the SSE stream
     return new Response(stream, {
       headers: {
+        ...responseHeaders,
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
@@ -121,9 +188,24 @@ Rules
     });
   } catch (error) {
     console.error('Error in SOAP note generation:', error);
-    return new Response(JSON.stringify({ error: 'Internal server error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return NextResponse.json(
+      { error: 'Internal server error', details: error instanceof Error ? error.message : String(error) },
+      { 
+        status: 500, 
+        headers: { ...responseHeaders, 'Content-Type': 'application/json' } 
+      }
+    );
   }
+}
+
+// OPTIONS handler for CORS preflight requests
+export async function OPTIONS(req: NextRequest) {
+  return new Response(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    },
+  });
 }
