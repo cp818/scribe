@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
-// Using Node.js runtime instead of edge for better compatibility
-export const config = {
-  runtime: 'nodejs',
-};
+// Use Node.js runtime instead of edge for better compatibility
+export const runtime = 'nodejs';
+
+// Disable caching for real-time responses
+export const fetchCache = 'force-no-store';
 
 export async function GET(req: NextRequest) {
   // Add CORS headers for all responses

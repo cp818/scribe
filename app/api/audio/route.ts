@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// Using serverless function instead of edge runtime for better compatibility
-export const config = {
-  runtime: 'nodejs',
-  api: {
-    responseLimit: false,
-  },
-};
+// Use Node.js runtime instead of edge runtime
+export const runtime = 'nodejs';
+
+// Increase the response size limit
+export const fetchCache = 'force-no-store';
 
 // Audio transcription endpoint that forwards to Deepgram
 export async function POST(req: NextRequest) {
