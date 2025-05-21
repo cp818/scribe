@@ -271,28 +271,36 @@ export default function AudioRecorder({
     }
   };
   
-  // For demonstration purposes only - DISABLED to prioritize real audio input
+  // For demonstration purposes - used as fallback when real audio fails
   const useMockTranscript = () => {
-    console.log('Mock transcript function called but DISABLED');
-    // We're completely disabling mock data to ensure real audio is used
-    // Display an error to the user instead
-    onError('No audio was successfully captured or transcribed. Please check your microphone and try again.');
+    console.log('Using mock transcript data as fallback');
+    onError('Using demo data as your audio could not be processed. Check API keys and microphone permissions.');
     
-    // Reset state to empty to avoid confusion
-    pendingTranscript.current = '';
-    setLiveTranscript('');
-    onTranscriptUpdate('');
+    // Provide mock transcript for demonstration
+    const mockTranscripts = 
+      "The patient is a 45-year-old male presenting with chest pain for the past two days. " +
+      "He describes it as pressure-like, rates it 6 out of 10 in severity. " + 
+      "Pain worsens with exertion and improves with rest. " +
+      "Denies radiation to jaw or arm. Reports mild shortness of breath. " +
+      "No history of heart disease, but has hypertension controlled with lisinopril. " +
+      "BP is 130/85, heart rate 75, temperature 98.6. Lungs are clear.";
+    
+    // Set the mock transcript
+    pendingTranscript.current = mockTranscripts;
+    setLiveTranscript(mockTranscripts);
+    onTranscriptUpdate(mockTranscripts);
+    
+    // Generate SOAP note from the mock transcript
+    updateSOAPNote();
   };
   
-  // Helper function for SOAP note errors - DISABLED mock data
+  // Helper function for SOAP note generation as a fallback
   const useMockSOAPNote = (transcript = '') => {
-    console.log('Mock SOAP note function called but DISABLED');
+    console.log('Using mock SOAP note data as fallback');
+    onError('Using demo SOAP note as your data could not be processed. Check API keys and permissions.');
     
-    // Instead of creating mock data, notify the user of the issue
-    onError('SOAP note generation failed. Please check that your API keys are set correctly and try again.');
-    
-    // Create an empty SOAP note structure to avoid errors
-    const emptyNote: SOAPNoteType = {
+    // Create a mock SOAP note that follows the Helix-Scribe prompt format
+    const mockNote: SOAPNoteType = {
       metadata: {
         patient_name: transcript.includes('Smith') ? 'John Smith' : null,
         clinician_name: transcript.includes('Dr.') ? transcript.match(/Dr\. ([A-Za-z]+)/)?.at(1) || null : null,
@@ -329,8 +337,8 @@ export default function AudioRecorder({
     };
     
     // Update the current note and notify the UI
-    currentSOAPNote.current = emptyNote;
-    onSOAPNoteUpdate(emptyNote);
+    currentSOAPNote.current = mockNote;
+    onSOAPNoteUpdate(mockNote);
     onProcessingChange(false);
   };
 
