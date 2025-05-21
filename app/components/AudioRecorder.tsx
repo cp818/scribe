@@ -108,22 +108,34 @@ export default function AudioRecorder({
         setRecordingTime(prev => prev + 1);
       }, 1000);
       
-      // Create and start MediaRecorder with specific audio format that Deepgram supports
-      // Use audio/wav with PCM encoding which is well-supported by Deepgram
-      const options = { mimeType: 'audio/webm;codecs=opus' };
+      // Try different audio formats in order of preference
+      // Deepgram works best with simple formats like audio/wav
+      const preferredFormats = [
+        'audio/wav',
+        'audio/webm',
+        'audio/webm;codecs=pcm',
+        'audio/webm;codecs=opus'
+      ];
       
-      // Check if this format is supported by the browser
-      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-        console.warn(`${options.mimeType} is not supported, using default format`);
+      // Find the first supported format
+      let selectedFormat = undefined;
+      for (const format of preferredFormats) {
+        if (MediaRecorder.isTypeSupported(format)) {
+          selectedFormat = { mimeType: format };
+          console.log(`Selected audio format: ${format}`);
+          break;
+        }
       }
       
-      // Create the MediaRecorder with the supported options
-      const mediaRecorder = new MediaRecorder(streamRef.current, 
-                                            MediaRecorder.isTypeSupported(options.mimeType) ? options : undefined);
+      // Create the MediaRecorder with the best supported format
+      const mediaRecorder = new MediaRecorder(streamRef.current, selectedFormat);
       mediaRecorderRef.current = mediaRecorder;
       
       // Log the actual format being used
       console.log(`Using audio format: ${mediaRecorder.mimeType}`);
+      
+      // Store the format for later use
+      const audioFormat = mediaRecorder.mimeType;
       
       // Collect audio data
       mediaRecorder.ondataavailable = (event) => {
@@ -156,11 +168,13 @@ export default function AudioRecorder({
       // Display indicator to the user
       onError('Processing audio...'); // This is just a status, not an error
       
+      // Pass the audio format information to the API
       const response = await fetch('/api/audio', {
         method: 'POST',
         body: audioBlob,
         headers: {
           'Content-Type': audioBlob.type || 'audio/webm',
+          'X-Audio-Format': audioBlob.type || 'audio/webm', // Additional header for server-side detection
         }
       });
 

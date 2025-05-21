@@ -52,17 +52,50 @@ export async function POST(req: NextRequest) {
     url.searchParams.append('smart_format', 'true');
     url.searchParams.append('language', 'en-US');
     
-    // WebM audio format (what modern browsers typically send)
-    // No need to specify encoding, sample rate, etc. as Deepgram can auto-detect WebM
-    // This makes the code more robust across different browsers
+    // Get the content type from the request headers
+    const contentType = req.headers.get('Content-Type') || 'audio/webm';
+    const audioFormat = req.headers.get('X-Audio-Format') || contentType;
+    
+    console.log('Audio format from client:', audioFormat);
+    
+    // Set parameters based on the content type
+    if (audioFormat.includes('audio/wav')) {
+      // WAV format - usually PCM encoding
+      url.searchParams.append('encoding', 'linear16');
+    } else if (audioFormat.includes('opus')) {
+      // WebM with Opus codec
+      url.searchParams.append('encoding', 'opus');
+    } else if (audioFormat.includes('audio/webm')) {
+      // Generic WebM - let Deepgram auto-detect
+      url.searchParams.append('encoding', 'webm');
+    }
+    
+    // Always send the mimetype to help Deepgram
+    url.searchParams.append('mimetype', audioFormat);
+    
+    // Add a language detection as backup
+    url.searchParams.append('detect_language', 'true');
     
     console.log(`Sending request to Deepgram: ${url.toString()}`);
+    
+    // Set the appropriate content type based on the audio format
+    let deepgramContentType = contentType;
+    
+    // Specific handling for different formats
+    if (audioFormat.includes('audio/wav')) {
+      deepgramContentType = 'audio/wav';
+    } else if (audioFormat.includes('audio/webm')) {
+      // Keep it simple for Deepgram
+      deepgramContentType = 'audio/webm';
+    }
+    
+    console.log(`Using Content-Type for Deepgram: ${deepgramContentType}`);
     
     const response = await fetch(url.toString(), {
       method: 'POST',
       headers: {
         'Authorization': `Token ${apiKey}`,
-        'Content-Type': 'audio/webm',
+        'Content-Type': deepgramContentType,
       },
       body: audioData
     });
