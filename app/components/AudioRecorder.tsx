@@ -192,16 +192,25 @@ export default function AudioRecorder({
     // Process any remaining audio chunks
     if (audioChunksRef.current.length > 0) {
       const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+      // Make sure to process the final audio chunk
       processAudioChunk(audioBlob);
-    }
-    
-    // Generate final SOAP note with all collected transcripts
-    if (pendingTranscript.current.trim()) {
-      updateSOAPNote();
+      
+      // Wait a short time to ensure the last chunk is processed
+      setTimeout(() => {
+        // Generate final SOAP note with all collected transcripts
+        if (pendingTranscript.current.trim()) {
+          console.log('Generating SOAP note from real transcript data');
+          updateSOAPNote();
+        }
+      }, 1000);
     } else if (liveTranscript.trim().length === 0) {
       // Only use mock data if we have no real transcript at all
       console.log('No transcript collected, using mock data for demonstration');
       useMockTranscript();
+    } else {
+      // We have transcript data but no remaining audio chunks
+      console.log('Using existing transcript data for SOAP note');
+      updateSOAPNote();
     }
     
     // Mark as not processing
@@ -262,38 +271,28 @@ export default function AudioRecorder({
     }
   };
   
-  // For demonstration purposes only
+  // For demonstration purposes only - DISABLED to prioritize real audio input
   const useMockTranscript = () => {
-    console.log('Using mock transcript data');
-    // Only use this if we have no real transcript data after stopping recording
-    if (pendingTranscript.current.trim().length > 0) {
-      console.log('Already have real transcript data, not using mock data');
-      return;
-    }
+    console.log('Mock transcript function called but DISABLED');
+    // We're completely disabling mock data to ensure real audio is used
+    // Display an error to the user instead
+    onError('No audio was successfully captured or transcribed. Please check your microphone and try again.');
     
-    const mockTranscripts = 
-      "The patient is a 45-year-old male presenting with chest pain for the past two days. " +
-      "He describes it as pressure-like, rates it 6 out of 10 in severity. " + 
-      "Pain worsens with exertion and improves with rest. " +
-      "Denies radiation to jaw or arm. Reports mild shortness of breath. " +
-      "No history of heart disease, but has hypertension controlled with lisinopril. " +
-      "BP is 130/85, heart rate 75, temperature 98.6. Lungs are clear.";
-    
-    // Set the entire mock transcript at once when stopping recording
-    pendingTranscript.current = mockTranscripts;
-    setLiveTranscript(mockTranscripts);
-    onTranscriptUpdate(mockTranscripts);
-    
-    // Generate SOAP note from the mock transcript
-    updateSOAPNote();
+    // Reset state to empty to avoid confusion
+    pendingTranscript.current = '';
+    setLiveTranscript('');
+    onTranscriptUpdate('');
   };
   
-  // Helper function to use mock SOAP note data for demonstration
+  // Helper function for SOAP note errors - DISABLED mock data
   const useMockSOAPNote = (transcript = '') => {
-    console.log('Using mock SOAP note data');
+    console.log('Mock SOAP note function called but DISABLED');
     
-    // Create a mock SOAP note that follows the Helix-Scribe prompt format
-    const mockNote: SOAPNoteType = {
+    // Instead of creating mock data, notify the user of the issue
+    onError('SOAP note generation failed. Please check that your API keys are set correctly and try again.');
+    
+    // Create an empty SOAP note structure to avoid errors
+    const emptyNote: SOAPNoteType = {
       metadata: {
         patient_name: transcript.includes('Smith') ? 'John Smith' : null,
         clinician_name: transcript.includes('Dr.') ? transcript.match(/Dr\. ([A-Za-z]+)/)?.at(1) || null : null,
@@ -330,8 +329,9 @@ export default function AudioRecorder({
     };
     
     // Update the current note and notify the UI
-    currentSOAPNote.current = mockNote;
-    onSOAPNoteUpdate(mockNote);
+    currentSOAPNote.current = emptyNote;
+    onSOAPNoteUpdate(emptyNote);
+    onProcessingChange(false);
   };
 
   // Format seconds to MM:SS
