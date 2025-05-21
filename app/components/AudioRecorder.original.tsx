@@ -15,9 +15,6 @@ interface AudioRecorderProps {
 // How often to update the SOAP note (in milliseconds)
 const NOTE_UPDATE_INTERVAL = 5000;
 
-// Size of audio chunks to send (in milliseconds)
-const CHUNK_SIZE = 3000;
-
 export default function AudioRecorder({
   isRecording,
   onToggleRecording,
@@ -26,21 +23,14 @@ export default function AudioRecorder({
   onError,
   onProcessingChange,
 }: AudioRecorderProps) {
-  // Refs for audio handling
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
-  const microphoneRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  
-  // State management
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const micAccessGranted = useRef(false);
   const lastNoteUpdateTime = useRef<number>(0);
   const pendingTranscript = useRef<string>('');
   const currentSOAPNote = useRef<SOAPNoteType | null>(null);
-  const audioBufferRef = useRef<Float32Array[]>([]);
-  const recordingStartTime = useRef<number>(0);
+  const audioChunksRef = useRef<Blob[]>([]);
   
-  // UI state
   const [recordingTime, setRecordingTime] = useState(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const [liveTranscript, setLiveTranscript] = useState('');
@@ -61,15 +51,8 @@ export default function AudioRecorder({
 
   const requestMicrophoneAccess = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        } 
-      });
-      
-      mediaStreamRef.current = stream;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
       micAccessGranted.current = true;
       onError(null);
       return stream;
@@ -84,6 +67,17 @@ export default function AudioRecorder({
     try {
       onError(null);
       
+      // If we don't have microphone access yet, request it
+      if (!micAccessGranted.current) {
+        const stream = await requestMicrophoneAccess();
+        if (!stream) return;
+      }
+
+      if (!streamRef.current) {
+        console.error('No audio stream available');
+        return;
+      }
+
       // Reset state for new recording session
       pendingTranscript.current = '';
       setLiveTranscript('');
@@ -98,182 +92,92 @@ export default function AudioRecorder({
           chief_complaint: null,
           medications_list: []
         },
-        subjective: "[Recording in progress...]",
-        objective: "[Recording in progress...]",
-        assessment: "[Recording in progress...]",
-        plan: "[Recording in progress...]",
+        subjective: "[Waiting for transcript...]",
+        objective: "[Waiting for transcript...]",
+        assessment: "[Waiting for transcript...]",
+        plan: "[Waiting for transcript...]",
         diff: ["Initial note"]
       });
       
       lastNoteUpdateTime.current = Date.now();
-      audioBufferRef.current = [];
+      audioChunksRef.current = [];
       setRecordingTime(0);
-      recordingStartTime.current = Date.now();
       
-      // If we don't have microphone access yet, request it
-      if (!micAccessGranted.current) {
-        const stream = await requestMicrophoneAccess();
-        if (!stream) return;
-      }
-
       // Start timer for recording duration
       timerRef.current = setInterval(() => {
         setRecordingTime(prev => prev + 1);
       }, 1000);
       
-      // Set up WebRTC audio processing
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      // Try different audio formats in order of preference
+      // Deepgram works best with simple formats like audio/wav
+      const preferredFormats = [
+        'audio/wav',
+        'audio/webm',
+        'audio/webm;codecs=pcm',
+        'audio/webm;codecs=opus'
+      ];
+      
+      // Find the first supported format
+      let selectedFormat = undefined;
+      for (const format of preferredFormats) {
+        if (MediaRecorder.isTypeSupported(format)) {
+          selectedFormat = { mimeType: format };
+          console.log(`Selected audio format: ${format}`);
+          break;
+        }
       }
       
-      const audioContext = audioContextRef.current;
+      // Create the MediaRecorder with the best supported format
+      const mediaRecorder = new MediaRecorder(streamRef.current, selectedFormat);
+      mediaRecorderRef.current = mediaRecorder;
       
-      // Create microphone source
-      microphoneRef.current = audioContext.createMediaStreamSource(mediaStreamRef.current!);
+      // Log the actual format being used
+      console.log(`Using audio format: ${mediaRecorder.mimeType}`);
       
-      // Create processor node to handle audio data
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
+      // Store the format for later use
+      const audioFormat = mediaRecorder.mimeType;
       
-      // Set up processing function to collect audio data
-      let chunkStartTime = Date.now();
-      processor.onaudioprocess = (e) => {
-        const inputData = e.inputBuffer.getChannelData(0);
-        const audioData = new Float32Array(inputData.length);
-        audioData.set(inputData);
-        
-        // Add to buffer
-        audioBufferRef.current.push(audioData);
-        
-        // Check if it's time to send a chunk
-        const now = Date.now();
-        if (now - chunkStartTime >= CHUNK_SIZE) {
-          // Send audio chunk for processing
-          processAudioBuffer();
-          chunkStartTime = now;
+      // Collect audio data
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+          processAudioChunk(event.data);
         }
       };
       
-      // Connect nodes: microphone -> processor -> destination
-      microphoneRef.current.connect(processor);
-      processor.connect(audioContext.destination);
-      
-      console.log('Recording started with WebRTC audio processing');
-      
+      // Start collecting 3-second chunks of audio for processing
+      mediaRecorder.start(3000);
+
     } catch (err) {
       console.error('Error starting recording:', err);
       onError('Failed to start recording. Please try again.');
     }
   };
 
-  const processAudioBuffer = async () => {
-    if (audioBufferRef.current.length === 0) return;
-    
-    try {
-      // Combine all the buffer chunks
-      const combinedLength = audioBufferRef.current.reduce((acc, buffer) => acc + buffer.length, 0);
-      const combinedBuffer = new Float32Array(combinedLength);
-      
-      let offset = 0;
-      for (const buffer of audioBufferRef.current) {
-        combinedBuffer.set(buffer, offset);
-        offset += buffer.length;
-      }
-      
-      // Clear buffer after processing
-      audioBufferRef.current = [];
-      
-      // Convert Float32Array to 16-bit PCM WAV
-      const wavBuffer = convertToWav(combinedBuffer, audioContextRef.current!.sampleRate);
-      
-      // Create a Blob from the WAV buffer
-      const audioBlob = new Blob([wavBuffer], { type: 'audio/wav' });
-      
-      console.log(`Processing audio chunk of size: ${Math.round(audioBlob.size / 1024)} KB`);
-      
-      // Send to server for transcription
-      await sendAudioForTranscription(audioBlob);
-      
-    } catch (err) {
-      console.error('Error processing audio buffer:', err);
+  const processAudioChunk = async (audioBlob: Blob) => {
+    if (!audioBlob || audioBlob.size === 0) {
+      console.error('Empty audio blob received');
+      return;
     }
-  };
-  
-  const convertToWav = (audioBuffer: Float32Array, sampleRate: number): ArrayBuffer => {
-    // WAV file header format
-    const createWavHeader = (dataLength: number) => {
-      const buffer = new ArrayBuffer(44);
-      const view = new DataView(buffer);
-      
-      // RIFF identifier
-      writeString(view, 0, 'RIFF');
-      // File length
-      view.setUint32(4, 36 + dataLength, true);
-      // RIFF type
-      writeString(view, 8, 'WAVE');
-      // Format chunk identifier
-      writeString(view, 12, 'fmt ');
-      // Format chunk length
-      view.setUint32(16, 16, true);
-      // Sample format (1 is PCM)
-      view.setUint16(20, 1, true);
-      // Channel count
-      view.setUint16(22, 1, true);
-      // Sample rate
-      view.setUint32(24, sampleRate, true);
-      // Byte rate (sample rate * block align)
-      view.setUint32(28, sampleRate * 2, true);
-      // Block align (channel count * bytes per sample)
-      view.setUint16(32, 2, true);
-      // Bits per sample
-      view.setUint16(34, 16, true);
-      // Data chunk identifier
-      writeString(view, 36, 'data');
-      // Data chunk length
-      view.setUint32(40, dataLength, true);
-      
-      return buffer;
-    };
-    
-    const writeString = (view: DataView, offset: number, string: string) => {
-      for (let i = 0; i < string.length; i++) {
-        view.setUint8(offset + i, string.charCodeAt(i));
-      }
-    };
-    
-    // Convert Float32Array to Int16Array
-    const samples = new Int16Array(audioBuffer.length);
-    for (let i = 0; i < audioBuffer.length; i++) {
-      // Convert float to int (with clipping)
-      const s = Math.max(-1, Math.min(1, audioBuffer[i]));
-      samples[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-    }
-    
-    // Create the WAV file
-    const dataLength = samples.length * 2; // 2 bytes per sample
-    const headerBuffer = createWavHeader(dataLength);
-    const wavBuffer = new Uint8Array(headerBuffer.byteLength + dataLength);
-    
-    // Combine header and samples
-    wavBuffer.set(new Uint8Array(headerBuffer), 0);
-    wavBuffer.set(new Uint8Array(samples.buffer), headerBuffer.byteLength);
-    
-    return wavBuffer.buffer;
-  };
 
-  const sendAudioForTranscription = async (audioBlob: Blob) => {
     try {
+      console.log(`Processing audio chunk of size: ${Math.round(audioBlob.size / 1024)} KB`);
+      // Log audio mime type
+      console.log(`Audio MIME type: ${audioBlob.type}`);
+      
       // Display indicator to the user
       onError('Processing audio...'); // This is just a status, not an error
       
+      // Pass the audio format information to the API
       const response = await fetch('/api/audio', {
         method: 'POST',
         body: audioBlob,
         headers: {
-          'Content-Type': 'audio/wav',
+          'Content-Type': audioBlob.type || 'audio/webm',
+          'X-Audio-Format': audioBlob.type || 'audio/webm', // Additional header for server-side detection
         }
       });
-      
+
       // Log the raw response for debugging
       console.log('API response status:', response.status, response.statusText);
       
@@ -282,10 +186,10 @@ export default function AudioRecorder({
         console.error('API error response:', errorText);
         throw new Error(`API returned ${response.status}: ${response.statusText}`);
       }
-      
+
       const data = await response.json();
       console.log('Transcription response:', data);
-      
+
       if (data.transcript) {
         // Clear any error messages
         onError(null);
@@ -312,7 +216,7 @@ export default function AudioRecorder({
         onError('No transcript detected. Please speak clearly or check your microphone.');
       }
     } catch (err) {
-      console.error('Error sending audio for transcription:', err);
+      console.error('Error processing audio chunk:', err);
       onError(`Failed to process audio: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
@@ -324,47 +228,35 @@ export default function AudioRecorder({
       timerRef.current = null;
     }
     
-    // Process any remaining audio
-    processAudioBuffer();
-    
-    // Stop WebRTC audio processing
-    if (processorRef.current) {
-      processorRef.current.disconnect();
-      processorRef.current = null;
+    // Stop MediaRecorder and release microphone
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
     }
     
-    if (microphoneRef.current) {
-      microphoneRef.current.disconnect();
-      microphoneRef.current = null;
+    // Process any remaining audio chunks
+    if (audioChunksRef.current.length > 0) {
+      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+      // Make sure to process the final audio chunk
+      processAudioChunk(audioBlob);
+      
+      // Wait a short time to ensure the last chunk is processed
+      setTimeout(() => {
+        // Generate final SOAP note with all collected transcripts
+        if (pendingTranscript.current.trim()) {
+          console.log('Generating SOAP note from real transcript data');
+          updateSOAPNote();
+        }
+      }, 1000);
+    } else if (liveTranscript.trim().length === 0) {
+      // Only use mock data if we have no real transcript at all
+      console.log('No transcript collected, using mock data for demonstration');
+      useMockTranscript();
+    } else {
+      // We have transcript data but no remaining audio chunks
+      console.log('Using existing transcript data for SOAP note');
+      updateSOAPNote();
     }
-    
-    // Close AudioContext
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      // Just suspend, don't close (so we can reuse it)
-      audioContextRef.current.suspend();
-    }
-    
-    // Stop all tracks in the media stream
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(track => track.stop());
-    }
-    
-    // Wait a short time to ensure the last chunk is processed
-    setTimeout(() => {
-      // Generate final SOAP note with all collected transcripts
-      if (pendingTranscript.current.trim()) {
-        console.log('Generating SOAP note from real transcript data');
-        updateSOAPNote();
-      } else if (liveTranscript.trim().length === 0) {
-        // Only use mock data if we have no real transcript at all
-        console.log('No transcript collected, using mock data for demonstration');
-        useMockTranscript();
-      } else {
-        // We have transcript data but no remaining audio chunks
-        console.log('Using existing transcript data for SOAP note');
-        updateSOAPNote();
-      }
-    }, 1000);
     
     // Mark as not processing
     onProcessingChange(false);
