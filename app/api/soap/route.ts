@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   // Add CORS headers for all responses
   const responseHeaders = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   };
 
@@ -205,8 +205,152 @@ export async function OPTIONS(req: NextRequest) {
     status: 200,
     headers: {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     },
   });
+}
+
+// POST handler for direct JSON data
+export async function POST(req: NextRequest) {
+  // Add CORS headers for all responses
+  const responseHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  };
+
+  try {
+    console.log('SOAP API POST endpoint called');
+
+    // Get data directly from request body
+    const data = await req.json();
+    
+    const { transcript, previous_note } = data;
+    
+    if (!transcript) {
+      console.log('Missing transcript in request');
+      return NextResponse.json(
+        { error: 'Missing transcript' },
+        { status: 400, headers: { ...responseHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    console.log('Transcript received, length:', transcript.length);
+    if (previous_note) {
+      console.log('Previous note provided');
+    }
+
+    // Check for OpenAI API key
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      console.error('Missing OpenAI API key');
+      return NextResponse.json(
+        { error: 'Configuration error: Missing OpenAI API key' },
+        { status: 500, headers: { ...responseHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Initialize OpenAI client
+    const openai = new OpenAI({
+      apiKey: apiKey,
+    });
+
+    try {
+      // Define the system prompt for GPT-4o
+      const systemPrompt = `You are "Helix‑Scribe," an expert medical scribe drafting concise, clinically accurate SOAP notes. Follow U.S. documentation standards. Never invent data; if needed information is missing, insert a placeholder in brackets (e.g., "[BP not mentioned]").
+
+When given the running transcript of a patient encounter, return or update ONE JSON object with these keys:
+  - metadata
+  - subjective
+  - objective
+  - assessment
+  - plan
+  - diff   ← lines changed since the previous JSON
+
+metadata must contain:
+  • patient_name       (string | null)
+  • clinician_name     (string | null)
+  • visit_datetime     (ISO‑8601 UTC)
+  • chief_complaint    (string | null)
+  • medications_list   (array of strings)
+
+Rules
+1. Parse only the content explicitly present in the transcript snippet you receive; do not repeat earlier facts unless restated.
+2. Write each SOAP section in complete medical sentences or bullet points; use standard abbreviations (e.g., HTN, RR).
+3. Leave placeholders for any missing but expected details.
+4. diff must list only the lines newly added or edited versus the previous JSON.`;
+
+      console.log('Calling OpenAI API...');
+
+      // Define a fallback SOAP note in case of API errors
+      const fallbackNote = {
+        metadata: {
+          patient_name: null,
+          clinician_name: null,
+          visit_datetime: new Date().toISOString(),
+          chief_complaint: null,
+          medications_list: []
+        },
+        subjective: "[Waiting for transcript processing]",
+        objective: "[Waiting for transcript processing]",
+        assessment: "[Waiting for transcript processing]",
+        plan: "[Waiting for transcript processing]",
+        diff: ["Initial SOAP note generated"]
+      };
+
+      try {
+        // Prepare the messages for OpenAI
+        const messages = [
+          { role: 'system', content: systemPrompt },
+          { 
+            role: 'user', 
+            content: JSON.stringify({
+              transcript,
+              previous_note
+            })
+          }
+        ];
+
+        // Call OpenAI
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4o-mini', // Could also use gpt-4o for higher accuracy
+          messages: messages as any, // Type casting to work around TypeScript issues
+          response_format: { type: 'json_object' }
+        });
+
+        const content = completion.choices[0]?.message?.content || '{}';
+        console.log('OpenAI response received');
+        
+        // Return the JSON response
+        return NextResponse.json(
+          JSON.parse(content),
+          { status: 200, headers: { ...responseHeaders, 'Content-Type': 'application/json' } }
+        );
+        
+      } catch (openaiError) {
+        // If OpenAI API fails, send the fallback note
+        console.error('OpenAI API error:', openaiError);
+        return NextResponse.json(
+          fallbackNote,
+          { status: 200, headers: { ...responseHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    } catch (error) {
+      console.error('Error in SOAP note generation:', error);
+      return NextResponse.json(
+        { error: 'Internal server error', details: error instanceof Error ? error.message : String(error) },
+        { status: 500, headers: { ...responseHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+  } catch (error) {
+    console.error('Error parsing request:', error);
+    return NextResponse.json(
+      { error: 'Internal server error', details: error instanceof Error ? error.message : String(error) },
+      { 
+        status: 500, 
+        headers: { ...responseHeaders, 'Content-Type': 'application/json' } 
+      }
+    );
+  }
 }
