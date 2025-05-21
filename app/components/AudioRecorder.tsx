@@ -137,16 +137,26 @@ export default function AudioRecorder({
 
     try {
       console.log(`Processing audio chunk of size: ${Math.round(audioBlob.size / 1024)} KB`);
+      // Log audio mime type
+      console.log(`Audio MIME type: ${audioBlob.type}`);
+      
+      // Display indicator to the user
+      onError('Processing audio...'); // This is just a status, not an error
       
       const response = await fetch('/api/audio', {
         method: 'POST',
         body: audioBlob,
         headers: {
-          'Content-Type': 'audio/webm',
+          'Content-Type': audioBlob.type || 'audio/webm',
         }
       });
 
+      // Log the raw response for debugging
+      console.log('API response status:', response.status, response.statusText);
+      
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('API error response:', errorText);
         throw new Error(`API returned ${response.status}: ${response.statusText}`);
       }
 
@@ -154,6 +164,9 @@ export default function AudioRecorder({
       console.log('Transcription response:', data);
 
       if (data.transcript) {
+        // Clear any error messages
+        onError(null);
+        
         // Add to pending transcript
         pendingTranscript.current += ' ' + data.transcript;
         
@@ -167,12 +180,17 @@ export default function AudioRecorder({
         if (now - lastNoteUpdateTime.current > NOTE_UPDATE_INTERVAL) {
           updateSOAPNote();
         }
+      } else if (data.error) {
+        // Show the specific error from the API
+        console.warn('API error:', data.error);
+        onError(`Transcription error: ${data.error}`);
       } else {
         console.warn('No transcript in response - continuing recording');
-        // Don't fall back to mock transcript right away
+        onError('No transcript detected. Please speak clearly or check your microphone.');
       }
     } catch (err) {
       console.error('Error processing audio chunk:', err);
+      onError(`Failed to process audio: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 

@@ -51,9 +51,10 @@ export async function POST(req: NextRequest) {
     url.searchParams.append('model', 'nova-3');
     url.searchParams.append('smart_format', 'true');
     url.searchParams.append('language', 'en-US');
-    url.searchParams.append('encoding', 'linear16');
-    url.searchParams.append('sample_rate', '48000');
-    url.searchParams.append('channels', '1');
+    
+    // WebM audio format (what modern browsers typically send)
+    // No need to specify encoding, sample rate, etc. as Deepgram can auto-detect WebM
+    // This makes the code more robust across different browsers
     
     console.log(`Sending request to Deepgram: ${url.toString()}`);
     
@@ -61,7 +62,7 @@ export async function POST(req: NextRequest) {
       method: 'POST',
       headers: {
         'Authorization': `Token ${apiKey}`,
-        'Content-Type': 'audio/wav',
+        'Content-Type': 'audio/webm',
       },
       body: audioData
     });
