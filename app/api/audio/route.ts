@@ -119,10 +119,34 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const transcription = await response.json();
-    console.log('Transcription received successfully');
-    
-    return NextResponse.json(transcription, { headers: responseHeaders });
+    try {
+      // First try to parse the response as JSON
+      const transcription = await response.json();
+      console.log('Transcription received successfully');
+      
+      // Ensure we return a consistent format
+      if (transcription && transcription.results) {
+        // This is the Deepgram format - extract just the transcript text for simplicity
+        try {
+          const transcript = transcription.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
+          console.log('Extracted transcript:', transcript);
+          return NextResponse.json({ transcript }, { headers: responseHeaders });
+        } catch (err) {
+          console.error('Error extracting transcript from Deepgram response:', err);
+          // Still return the full response
+          return NextResponse.json(transcription, { headers: responseHeaders });
+        }
+      } else {
+        // Pass through whatever we got
+        return NextResponse.json(transcription, { headers: responseHeaders });
+      }
+    } catch (parseError) {
+      console.error('Error parsing transcription response:', parseError);
+      return NextResponse.json(
+        { transcript: "Error processing transcription response. Check API keys and configuration." },
+        { status: 200, headers: responseHeaders }
+      );
+    }
   } catch (err) {
     console.error('Error with transcription service:', err);
     return NextResponse.json(
