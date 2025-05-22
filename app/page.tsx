@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import SOAPNote from './components/SOAPNote';
-import AudioRecorder from './components/AudioRecorder';
+import SimpleAudioRecorder from './components/SimpleAudioRecorder';
 import TranscriptDisplay from './components/TranscriptDisplay';
 import { SOAPNoteType } from './types';
 
@@ -40,7 +40,7 @@ export default function Home() {
     <div className="space-y-6">
       <div className="card">
         <h2 className="text-xl font-semibold mb-4">Medical Transcription</h2>
-        <AudioRecorder 
+        <SimpleAudioRecorder 
           isRecording={isRecording}
           onToggleRecording={toggleRecording}
           onTranscriptUpdate={handleTranscriptUpdate}

@@ -300,6 +300,17 @@ Rules
       };
 
       try {
+        // Extract metadata if provided
+        const metadataToPass = data.metadata || {
+          patient_name: null,
+          clinician_name: null,
+          visit_datetime: new Date().toISOString(),
+          chief_complaint: null,
+          medications_list: []
+        };
+        
+        console.log('Using metadata:', metadataToPass);
+
         // Prepare the messages for OpenAI
         const messages = [
           { role: 'system', content: systemPrompt },
@@ -307,7 +318,8 @@ Rules
             role: 'user', 
             content: JSON.stringify({
               transcript,
-              previous_note
+              previous_note,
+              metadata: metadataToPass
             })
           }
         ];
