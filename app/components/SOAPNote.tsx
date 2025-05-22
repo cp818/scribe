@@ -93,12 +93,25 @@ export default function SOAPNote({ note, isLoading }: SOAPNoteProps) {
       </div>
       
       <div className="grid grid-cols-2 gap-2 text-sm">
-        <div><span className="font-medium">Patient:</span> {note.metadata.patient_name || '[Unknown]'}</div>
-        <div><span className="font-medium">Clinician:</span> {note.metadata.clinician_name || '[Unknown]'}</div>
-        <div><span className="font-medium">Date/Time:</span> {new Date(note.metadata.visit_datetime).toLocaleString()}</div>
-        <div><span className="font-medium">Chief Complaint:</span> {note.metadata.chief_complaint || '[Not mentioned]'}</div>
+        <div>
+          <span className="font-medium">Patient:</span> {note?.metadata?.patient_name || '[Unknown]'}
+        </div>
+        <div>
+          <span className="font-medium">Clinician:</span> {note?.metadata?.clinician_name || '[Unknown]'}
+        </div>
+        <div>
+          <span className="font-medium">Date/Time:</span> {
+            note?.metadata?.visit_datetime ? 
+              new Date(note.metadata.visit_datetime).toLocaleString() : 
+              new Date().toLocaleString()
+          }
+        </div>
+        <div>
+          <span className="font-medium">Chief Complaint:</span> {note?.metadata?.chief_complaint || '[Not mentioned]'}
+        </div>
         <div className="col-span-2">
           <span className="font-medium">Medications:</span> {
+            note?.metadata?.medications_list && Array.isArray(note.metadata.medications_list) && 
             note.metadata.medications_list.length > 0 
               ? note.metadata.medications_list.join(', ') 
               : '[None mentioned]'
@@ -111,22 +124,24 @@ export default function SOAPNote({ note, isLoading }: SOAPNoteProps) {
           <h3 className="font-semibold capitalize">{section}</h3>
           {editMode ? (
             <textarea
-              value={editedNote?.[section as keyof SOAPNoteType] as string}
+              value={(editedNote?.[section as keyof SOAPNoteType] as string) || ''}
               onChange={(e) => handleInputChange(section as keyof SOAPNoteType, e.target.value)}
               className="w-full p-2 border rounded-md min-h-[100px]"
             />
           ) : (
-            <div className="whitespace-pre-wrap">{note[section as keyof SOAPNoteType] as string}</div>
+            <div className="whitespace-pre-wrap">
+              {(note?.[section as keyof SOAPNoteType] as string) || `[No ${section} information available]`}
+            </div>
           )}
         </div>
       ))}
 
-      {note.diff && note.diff.length > 0 && (
+      {note?.diff && Array.isArray(note.diff) && note.diff.length > 0 && (
         <div className="mt-4 p-3 bg-yellow-50 rounded-md">
           <h3 className="font-semibold text-sm mb-1">Recent Updates:</h3>
           <ul className="text-sm list-disc pl-4">
             {note.diff.map((item, index) => (
-              <li key={index} className="text-gray-700">{item}</li>
+              <li key={index} className="text-gray-700">{typeof item === 'string' ? item : 'Update item'}</li>
             ))}
           </ul>
         </div>

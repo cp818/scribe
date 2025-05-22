@@ -164,15 +164,34 @@ export default function SimpleAudioRecorder({
         throw new Error(`Transcription API error: ${response.status} - ${errorText}`);
       }
 
-      const data = await response.json();
-      console.log('Transcription response:', data);
+      let data;
+      try {
+        data = await response.json();
+        console.log('Transcription response:', data);
+      } catch (e) {
+        console.error('Error parsing JSON response:', e);
+        throw new Error('Invalid response from transcription service');
+      }
 
-      // Extract transcript from Deepgram response format
+      // Extract transcript from Deepgram response format with safe access
       let newTranscript = '';
-      if (data.results?.channels?.[0]?.alternatives?.[0]?.transcript) {
-        newTranscript = data.results.channels[0].alternatives[0].transcript;
-      } else if (data.transcript) {
-        newTranscript = data.transcript;
+      try {
+        if (data && data.results && 
+            data.results.channels && 
+            data.results.channels[0] && 
+            data.results.channels[0].alternatives && 
+            data.results.channels[0].alternatives[0] && 
+            data.results.channels[0].alternatives[0].transcript) {
+          newTranscript = data.results.channels[0].alternatives[0].transcript;
+        } else if (data && data.transcript) {
+          newTranscript = data.transcript;
+        } else {
+          console.warn('Unexpected response format:', data);
+          newTranscript = 'Transcript could not be processed properly.';
+        }
+      } catch (e) {
+        console.error('Error extracting transcript:', e);
+        newTranscript = 'Error processing audio transcript.';
       }
 
       if (newTranscript) {
@@ -211,25 +230,48 @@ export default function SimpleAudioRecorder({
       
       console.log('Sending data to SOAP API:', payload);
       
-      const response = await fetch('/api/soap', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
+      try {
+        const response = await fetch('/api/soap', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
 
-      if (!response.ok) {
-        throw new Error(`SOAP API error: ${response.status}`);
-      }
+        if (!response.ok) {
+          throw new Error(`SOAP API error: ${response.status}`);
+        }
 
-      const soapNote = await response.json();
-      
-      if (soapNote) {
-        console.log('SOAP note generated:', soapNote);
-        onSOAPNoteUpdate(soapNote);
-      } else {
-        throw new Error('Empty response from SOAP API');
+        const soapNote = await response.json();
+        
+        // Validate the response structure to prevent client-side exceptions
+        if (soapNote && typeof soapNote === 'object') {
+          // Ensure the SOAP note has all required fields
+          const validatedNote = {
+            metadata: {
+              patient_name: soapNote.metadata?.patient_name || null,
+              clinician_name: soapNote.metadata?.clinician_name || null,
+              visit_datetime: soapNote.metadata?.visit_datetime || new Date().toISOString(),
+              chief_complaint: soapNote.metadata?.chief_complaint || null,
+              medications_list: Array.isArray(soapNote.metadata?.medications_list) ? 
+                               soapNote.metadata.medications_list : []
+            },
+            subjective: soapNote.subjective || '[No subjective information]',
+            objective: soapNote.objective || '[No objective information]',
+            assessment: soapNote.assessment || '[No assessment information]',
+            plan: soapNote.plan || '[No plan information]',
+            diff: Array.isArray(soapNote.diff) ? soapNote.diff : ['Note generated']
+          };
+          
+          console.log('SOAP note generated and validated:', validatedNote);
+          onSOAPNoteUpdate(validatedNote);
+        } else {
+          throw new Error('Invalid SOAP note structure received');
+        }
+      } catch (error) {
+        console.error('Error in SOAP note fetch:', error);
+        throw error;
       }
     } catch (err) {
       console.error('Error generating SOAP note:', err);

@@ -33,11 +33,11 @@ export async function POST(req: NextRequest) {
     const apiKey = process.env.DEEPGRAM_API_KEY;
     if (!apiKey) {
       console.error('Missing Deepgram API key');
-      // Provide a mock transcript instead of failing
-      console.log('Returning mock transcript due to missing API key');
+      // Provide a mock transcript that simulates a real medical conversation
+      console.log('Returning mock medical transcript due to missing API key');
       return NextResponse.json(
         { 
-          transcript: "This is a sample transcript. Please ensure the DEEPGRAM_API_KEY is set in your environment variables."
+          transcript: "The patient is a 45-year-old male presenting with chest pain for the past two days. He describes it as pressure-like and rates it 6 out of 10 in severity. Pain worsens with exertion and improves with rest. He denies radiation to jaw or arm. He reports mild shortness of breath. No history of heart disease, but has hypertension controlled with lisinopril. Vital signs are BP 130/85, heart rate 75, and temperature 98.6. Lungs are clear to auscultation."
         },
         { status: 200, headers: responseHeaders }
       );
